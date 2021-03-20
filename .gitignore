@@ -140,3 +140,4 @@ cython_debug/
 #custom
 data/
 .vscode/
+.mp4
