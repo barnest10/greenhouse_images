@@ -16,7 +16,6 @@ from pprint import pprint as pp
 import io
 import ffmpeg
 
-SCOPES = ['https://www.googleapis.com/auth/drive']
 
 def build_credentials(creds, scopes):
     credentials = service_account.Credentials.from_service_account_file(creds, scopes=scopes)
@@ -50,7 +49,7 @@ def get_files(files, service, camera_name, folder):
     digit_length = len(str(total_files))
     for file in files:
         #check for 0 byte files or all black ones :)
-        if int(file['size']) > 50000:
+        if int(file['size']) > 50:
             digits_needed = digit_length - len(str(i))
             number = "{}{}".format(digits_needed*"0", i)
             file_name = "{}-{}.jpg".format(camera_name, number)

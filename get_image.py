@@ -12,8 +12,6 @@ import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-SERVICE_ACCOUNT_FILE = 'credentials.json'
-
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
 
@@ -28,19 +26,37 @@ def generate_file(camera, file):
         print("{} does not exist".format(camera['local_directory']))
         sys.exit()
 
-    file_name = "{}_{}.jpg".format(camera['name'], datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+    now = datetime.datetime.now()
+    file_name = "{}_{}.jpg".format(camera['name'], now.strftime("%Y%m%d-%H%M%S"))
     file_path = "{}/{}".format(camera['local_directory'], file_name)
     with open(file_path, 'wb') as f:
         f.write(file.content)
     
-    return file_path, file_name
+    return file_path, file_name, now
 
-def drive_upload(args, file_path, file_name, camera):
+def drive_upload(args, file_path, file_name, camera, now):
+    folder_date = now.strftime('%Y%m%d')
     credentials = service_account.Credentials.from_service_account_file(args.credentials, scopes=SCOPES)
     service = build('drive', 'v3', credentials=credentials)
+    dir_list_result = service.files().list(q="name=\'{}\' and \'{}\' in parents".format(folder_date, camera['parents'][0]), fields = 'files(id, name)').execute()
+
+    if not dir_list_result.get('files', []):
+        file_metadata = {
+        'name': folder_date,
+        'mimeType': 'application/vnd.google-apps.folder',
+        'parents': camera['parents']
+        }
+
+        dir_create_result = service.files().create(body=file_metadata,fields="id").execute()
+        parent = dir_create_result.get('id', {})
+    else:
+        parent = dir_list_result.get('files', [])[0]['id']
+
     if service:
         media = MediaFileUpload(file_path, mimetype='image/jpeg')
-        results = service.files().create(media_body=media, body={"name": file_name, "parents": camera['parents']}).execute()
+        print(parent)
+        results = service.files().create(media_body=media, body={"name": file_name, "parents": [parent] }).execute()
+    
     if results:
         return results
     else:
@@ -73,17 +89,18 @@ def main():
             data = json.load(f)
             #get pic from camera
         for camera in data:
+            print(data)
             print("Getting Pic from Camera {}".format(camera['name']))
             file = get_image(camera)
 
             #process file
             if file:
                 print("Generating File")
-                file_path, file_name = generate_file(camera, file)
+                file_path, file_name, now = generate_file(camera, file)
 
                 if args.credentials and file_name:
                     print("uploading to Drive")
-                    results = drive_upload(args, file_path, file_name, camera)
+                    results = drive_upload(args, file_path, file_name, camera, now)
 
                     if results:
                         print("{} uploaded to Drive Successfully".format(file_name))
