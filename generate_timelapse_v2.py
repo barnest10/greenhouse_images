@@ -15,7 +15,10 @@ import urllib3
 from pprint import pprint as pp
 import io
 import ffmpeg
+import re
+import argparse
 
+SCOPES = ['https://www.googleapis.com/auth/drive']
 
 def build_credentials(creds, scopes):
     credentials = service_account.Credentials.from_service_account_file(creds, scopes=scopes)
@@ -27,43 +30,46 @@ def build_credentials(creds, scopes):
     else:
         return None
 
-def filter_date(service, selectedTime, parent):
+def filter_date(service, parent):
     if service:
         page_token = None
         files = []
-        while True:
-            response = service.files().list(q="modifiedTime > \'{}\' and \'{}\' in parents".format(selectedTime, parent),
+        print(parent)
+        response = service.files().list(q="name = \'{}\'".format(parent),
+                                                spaces='drive',
+                                                fields='files(id, name, modifiedTime, size)').execute()
+            
+        parent_id=response.get('files', [])
+        print(parent_id)
+        if parent_id:
+            while True:
+            
+                response = service.files().list(q="\'{}\' in parents".format(parent_id[0]['id']),
                                                 spaces='drive',
                                                 fields='nextPageToken, files(id, name, modifiedTime, size)',
                                                 pageToken=page_token).execute()
-            
-            files.extend(response.get('files'))
-            page_token = response.get('nextPageToken', None)
-            if page_token is None:
-                return files
+                files.extend(response.get('files'))
+                page_token = response.get('nextPageToken', None)
+                if page_token is None:
+                    return files
 
-def get_files(files, service, camera_name, folder):
-    i = 1
-    total_files = len(files)
-    #need enough decimal places for all files
-    digit_length = len(str(total_files))
+def get_files(files, service, camera_name, folder, startTime, endTime):
+    startTime_obj = datetime.datetime.strptime(startTime, "%Y-%m-%dT%H:%M:%S.%fZ")
+    endTime_obj = datetime.datetime.strptime(endTime, "%Y-%m-%dT%H:%M:%S.%fZ")
     for file in files:
-        #check for 0 byte files or all black ones :)
-        if int(file['size']) > 50:
-            digits_needed = digit_length - len(str(i))
-            number = "{}{}".format(digits_needed*"0", i)
-            file_name = "{}-{}.jpg".format(camera_name, number)
-            request = service.files().get_media(fileId=file['id'])
-            fh = io.FileIO(folder + file_name, 'wb')
-            downloader = MediaIoBaseDownload(fh, request)
-            done = False
-            i+=1
-            while done is False:
-                status, done = downloader.next_chunk()
-                print("Downloading: {}, size: {}".format(file_name, file['size']))
-        else:
-            #0 byte file so lets delete it
-            request = service.files().delete(fileId=file['id'])
+        #directory all numbers date format
+        if re.match(r'\d{8}', file['name']):
+            #directory in time range
+            directory_obj = datetime.datetime.strptime(file['name'], "%Y%m%d")
+            if directory_obj.date() >= startTime_obj.date() and directory_obj.date() <= endTime_obj.date():
+                request = service.files().get_media(fileId=file['id'])
+                fh = io.FileIO(folder + camera_name, 'wb')
+                downloader = MediaIoBaseDownload(fh, request)
+                done = False
+
+                while done is False:
+                    status, done = downloader.next_chunk()
+                    print("Downloading: {}, size: {}".format(file_name, file['size']))
 
 def generate_video(folder, camera_name, output_path=None):
     directory_length = len(os.listdir(folder))
@@ -92,16 +98,32 @@ def generate_video(folder, camera_name, output_path=None):
         return False
 
 def main():
-    service = build_credentials(SERVICE_ACCOUNT_FILE, SCOPES)
+    parser = argparse.ArgumentParser(description='Generate timelapse video from images stored on google drive')
+    parser.add_argument('parent_file_name', help='Parent folder in Google Drive Hierachy')
+    parser.add_argument('--start_time', '-s', help="Start date in format %Y-%m-%dT%H:%M:%S.%fZ")
+    parser.add_argument('--end_time', '-e', help="Start date in format %Y-%m-%dT%H:%M:%S.%fZ")
+    parser.add_argument('--credentials', '-c', help="Google Service Account JSON" )
+    #parser.add_argument('--delete','-D', action="store_true", help="delete local file after upload to Drive")
+    
+    args = parser.parse_args()
+    if not args.credentials:
+        print("Credential file required")
+        quit()
+    
+    if not (args.start_time and args.end_time):
+        print("Start and end times required")
+        quit()
+
+    service = build_credentials(args.credentials, SCOPES)
 
     #get list of files after date/time
-    files = filter_date(service, test_time, test_parent)
+    files = filter_date(service, args.parent_file_name)
 
-    sorted_files = (sorted(files,key=lambda file: file['modifiedTime']))
+   # sorted_files = (sorted(files,key=lambda file: file['modifiedTime']))
 
-    get_files(sorted_files, service, test_camera, test_folder)
+    get_files(files, service, args.parent_file_name, "test/", args.start_time, args.end_time)
    
-    output = generate_video(test_folder, test_camera)
+    #output = generate_video(test_folder, test_camera)
 
 
 if __name__ == '__main__':

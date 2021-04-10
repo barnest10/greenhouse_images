@@ -15,8 +15,11 @@ import urllib3
 from pprint import pprint as pp
 import io
 import ffmpeg
+import argparse
+
 
 SCOPES = ['https://www.googleapis.com/auth/drive']
+LOCAL_FOLDER = "temp/"
 
 def build_credentials(creds, scopes):
     credentials = service_account.Credentials.from_service_account_file(creds, scopes=scopes)
@@ -28,12 +31,14 @@ def build_credentials(creds, scopes):
     else:
         return None
 
-def filter_date(service, selectedTime, parent):
+def filter_date(service, startTime, endTime, parent):
     if service:
         page_token = None
         files = []
+        query_string = "modifiedTime >= \'{}\' and modifiedTime <= \'{}\' and name contains \'{}\' and mimeType != 'application/vnd.google-apps.folder'".format(startTime, endTime, parent)
+
         while True:
-            response = service.files().list(q="modifiedTime > \'{}\' and \'{}\' in parents".format(selectedTime, parent),
+            response = service.files().list(q=query_string,
                                                 spaces='drive',
                                                 fields='nextPageToken, files(id, name, modifiedTime, size)',
                                                 pageToken=page_token).execute()
@@ -44,6 +49,11 @@ def filter_date(service, selectedTime, parent):
                 return files
 
 def get_files(files, service, camera_name, folder):
+     #check if output exists
+    if not os.path.exists(folder):
+        #add folder
+        print("Creating temp directory")
+        os.makedirs(folder)
     i = 1
     total_files = len(files)
     #need enough decimal places for all files
@@ -93,16 +103,31 @@ def generate_video(folder, camera_name, output_path=None):
         return False
 
 def main():
-    service = build_credentials(SERVICE_ACCOUNT_FILE, SCOPES)
+    parser = argparse.ArgumentParser(description='Generate timelapse video from images stored on google drive')
+    parser.add_argument('parent_file_name', help='Parent folder in Google Drive Hierachy -- Camera NAME')
+    parser.add_argument('--start_time', '-s', help="Start date in format %Y-%m-%dT%H:%M:%S.%fZ")
+    parser.add_argument('--end_time', '-e', help="Start date in format %Y-%m-%dT%H:%M:%S.%fZ")
+    parser.add_argument('--credentials', '-c', help="Google Service Account JSON" )
+    
+    args = parser.parse_args()
+    if not args.credentials:
+        print("Credential file required")
+        quit()
+    
+    if not (args.start_time and args.end_time):
+        print("Start and end times required")
+        quit()
+    
+    service = build_credentials(args.credentials, SCOPES)
 
     #get list of files after date/time
-    files = filter_date(service, test_time, test_parent)
+    files = filter_date(service, args.start_time, args.end_time, args.parent_file_name)
 
     sorted_files = (sorted(files,key=lambda file: file['modifiedTime']))
 
-    get_files(sorted_files, service, test_camera, test_folder)
+    get_files(sorted_files, service, args.parent_file_name, LOCAL_FOLDER)
    
-    output = generate_video(test_folder, test_camera)
+    output = generate_video(LOCAL_FOLDER, args.parent_file_name)
 
 
 if __name__ == '__main__':
